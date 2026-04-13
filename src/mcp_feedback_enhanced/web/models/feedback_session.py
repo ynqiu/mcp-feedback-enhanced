@@ -173,6 +173,9 @@ class WebFeedbackSession:
         self.user_timeout_seconds = 3600  # 預設 1 小時
         self.user_timeout_timer: threading.Timer | None = None
 
+        # 定時保持連接：可被 keep_alive 訊息動態延長的截止時間
+        self._keep_alive_deadline: float | None = None
+
         # 確保臨時目錄存在
         TEMP_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -459,6 +462,19 @@ class WebFeedbackSession:
             self.user_timeout_timer.start()
             debug_log(f"已啟動用戶超時計時器: {timeout_seconds}秒")
 
+    def extend_keep_alive_deadline(self, interval_seconds: int) -> None:
+        """
+        通過 keep-alive 信號延長等待截止時間（不提交反饋，對 LLM 透明）
+
+        Args:
+            interval_seconds: 下一次 keep-alive 的間隔秒數，延長時間 = interval + 60s 緩衝
+        """
+        extension = interval_seconds + 60  # 額外 60 秒緩衝
+        self._keep_alive_deadline = time.time() + extension
+        debug_log(
+            f"會話 {self.session_id} keep-alive 延長超時截止至 {extension} 秒後"
+        )
+
     async def wait_for_feedback(self, timeout: int = 600) -> dict[str, Any]:
         """
         等待用戶回饋，包含圖片，支援超時自動清理
@@ -481,11 +497,27 @@ class WebFeedbackSession:
             )
 
             loop = asyncio.get_event_loop()
+            deadline = time.time() + actual_timeout
 
-            def wait_in_thread():
-                return self.feedback_completed.wait(actual_timeout)
+            def wait_in_thread_loop():
+                """Loop-based wait that supports keep-alive deadline extension."""
+                while True:
+                    # Use the later of original deadline or keep-alive extended deadline
+                    effective_deadline = deadline
+                    if self._keep_alive_deadline and self._keep_alive_deadline > effective_deadline:
+                        effective_deadline = self._keep_alive_deadline
 
-            completed = await loop.run_in_executor(None, wait_in_thread)
+                    remaining = effective_deadline - time.time()
+                    if remaining <= 0:
+                        return False  # Truly timed out
+
+                    # Wait in short intervals so we can re-check extended deadline
+                    interval = min(10.0, remaining)
+                    if self.feedback_completed.wait(interval):
+                        return True  # Feedback received
+                    # Not done yet, loop to re-check deadline
+
+            completed = await loop.run_in_executor(None, wait_in_thread_loop)
 
             if completed:
                 # 檢查是否是用戶設定的超時
@@ -572,6 +604,56 @@ class WebFeedbackSession:
                 debug_log(f"發送反饋確認失敗: {e}")
 
         # 重構：不再自動關閉 WebSocket，保持連接以支援頁面持久性
+
+    def reset_for_reuse(self, project_directory: str, summary: str) -> None:
+        """重置會話以便複用，保留 session_id 和 WebSocket 連接
+
+        在 MCP 再次調用 interactive_feedback 時，若當前會話已提交反饋，
+        可直接復位此會話而無需創建新會話，實現無縫持續連接。
+
+        Args:
+            project_directory: 新的專案目錄路徑
+            summary: 新的 AI 工作摘要
+        """
+        debug_log(f"會話 {self.session_id} 開始複用重置，新摘要長度: {len(summary)}")
+
+        # 更新基本信息
+        self.project_directory = project_directory
+        self.summary = summary
+
+        # 重置回饋數據
+        self.feedback_result = None
+        self.images = []
+        self.settings = {}
+        self.command_logs = []
+
+        # 重置狀態
+        self.status = SessionStatus.WAITING
+        self.status_message = "等待用戶回饋"
+
+        # 重置完成事件（關鍵：清除舊的 set 狀態）
+        self.feedback_completed.clear()
+
+        # 重置 keep-alive 截止時間
+        self._keep_alive_deadline = None
+
+        # 更新時間戳
+        self.last_activity = time.time()
+
+        # 取消用戶超時計時器（如有）
+        if self.user_timeout_timer:
+            self.user_timeout_timer.cancel()
+            self.user_timeout_timer = None
+        self.user_timeout_enabled = False
+
+        # 取消舊的自動清理計時器，重新啟動
+        if self.cleanup_timer:
+            self.cleanup_timer.cancel()
+            self.cleanup_timer = None
+        self._cleanup_done = False
+        self._schedule_auto_cleanup()
+
+        debug_log(f"會話 {self.session_id} 複用重置完成，狀態: {self.status.value}")
 
     def add_user_message(self, message_data: dict[str, Any]) -> None:
         """添加用戶消息記錄"""

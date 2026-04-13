@@ -49,6 +49,9 @@
         // 自動提交管理器
         this.autoSubmitManager = null;
 
+        // 定時保持連接定時器
+        this.keepAliveTimer = null;
+
         // 應用程式狀態
         this.isInitialized = false;
         this.pendingSubmission = null;
@@ -280,7 +283,10 @@
                             self.webSocketManager.updateSessionTimeoutSettings(timeoutSettings);
                         }
 
-                        // 18. 建立 WebSocket 連接
+                        // 18. 初始化定時保持連接
+                        self.checkAndStartKeepAlive();
+
+                        // 19. 建立 WebSocket 連接
                         self.webSocketManager.connect();
 
                         resolve();
@@ -822,6 +828,36 @@
         console.log('🔍 檢查 action 字段:', data.action);
         console.log('🔍 檢查 type 字段:', data.type);
 
+        // 處理會話複用通知（同一會話 ID，只更新摘要和重置表單）
+        if (data.action === 'session_resumed') {
+            console.log('🔁 檢測到會話複用，無縫更新頁面內容（不創建歷史記錄）');
+
+            const self = this;
+            setTimeout(function() {
+                // 1. 刷新頁面內容（AI 摘要等）
+                self.refreshPageContent();
+
+                // 2. 重置表單
+                self.clearFeedback();
+
+                // 3. 重置回饋狀態為等待中
+                if (self.uiManager) {
+                    const sessionId = data.session_info ? data.session_info.session_id : self.currentSessionId;
+                    self.uiManager.setFeedbackState(window.MCPFeedback.Utils.CONSTANTS.FEEDBACK_WAITING, sessionId);
+                }
+
+                // 4. 檢查並啟動自動提交
+                self.checkAndStartAutoSubmit();
+
+                // 5. 檢查並啟動定時保持連接
+                self.checkAndStartKeepAlive();
+
+                console.log('✅ 會話複用更新完成，繼續等待新回饋');
+            }, 300);
+
+            return; // 提前返回，不執行後續新會話邏輯
+        }
+
         // 檢查是否是新會話創建的通知
         if (data.action === 'new_session_created' || data.type === 'new_session_created') {
             console.log('🆕 檢測到新會話創建，局部更新頁面內容');
@@ -885,6 +921,9 @@
 
                 // 6. 檢查並啟動自動提交
                 self.checkAndStartAutoSubmit();
+
+                // 7. 檢查並啟動定時保持連接
+                self.checkAndStartKeepAlive();
 
                 console.log('✅ 局部更新完成，頁面已準備好接收新的回饋');
             }, 500);
@@ -1198,7 +1237,7 @@
                 console.log('⏸️ 手動提交反饋，停止自動提交倒數計時器');
                 this.autoSubmitManager.stop();
             }
-            
+
             // 停止會話超時計時器
             if (this.webSocketManager) {
                 console.log('⏸️ 提交反饋，停止會話超時計時器');
@@ -2202,7 +2241,138 @@
             this.textareaHeightManager.destroy();
         }
 
+        // 停止定時保持連接計時器
+        this.stopKeepAlive();
+
         console.log('✅ 應用程式資源清理完成');
+    };
+
+    // ==================== 定時保持連接功能 ====================
+
+    /**
+     * 檢查並啟動定時保持連接
+     */
+    FeedbackApp.prototype.checkAndStartKeepAlive = function() {
+        if (!this.settingsManager) {
+            return;
+        }
+
+        const keepAliveEnabled = this.settingsManager.get('keepAliveEnabled');
+
+        if (keepAliveEnabled) {
+            // 檢查當前狀態是否為等待回饋
+            const currentState = this.uiManager ? this.uiManager.getFeedbackState() : null;
+            const isWaitingForFeedback = currentState === window.MCPFeedback.Utils.CONSTANTS.FEEDBACK_WAITING;
+
+            if (isWaitingForFeedback) {
+                this.startKeepAlive();
+            } else {
+                console.log('🔗 定時保持連接：當前狀態不適合啟動，等待適當時機');
+            }
+        }
+    };
+
+    /**
+     * 啟動定時保持連接計時器
+     */
+    FeedbackApp.prototype.startKeepAlive = function() {
+        // 先停止現有的計時器
+        this.stopKeepAlive();
+
+        if (!this.settingsManager) {
+            return;
+        }
+
+        const interval = this.settingsManager.get('keepAliveInterval') || 300;
+
+        console.log('🔗 啟動定時保持連接，間隔:', interval, '秒');
+
+        var self = this;
+        this.keepAliveTimer = setInterval(function() {
+            self.performKeepAliveSubmit();
+        }, interval * 1000);
+    };
+
+    /**
+     * 停止定時保持連接計時器
+     */
+    FeedbackApp.prototype.stopKeepAlive = function() {
+        if (this.keepAliveTimer) {
+            clearInterval(this.keepAliveTimer);
+            this.keepAliveTimer = null;
+            console.log('🔗 定時保持連接已停止');
+        }
+    };
+
+    /**
+     * 執行保持連接（自動提交"-"反饋，使 interactive_feedback 會話保持活躍）
+     */
+    FeedbackApp.prototype.performKeepAliveSubmit = function() {
+        console.log('🔗 執行定時保持連接（自動發送"-"反饋）...');
+
+        if (!this.webSocketManager || !this.settingsManager || !this.uiManager) {
+            console.warn('🔗 管理器未初始化，跳過自動保持連接');
+            return;
+        }
+
+        // 只在等待狀態且 WebSocket 就緒時執行
+        var currentState = this.uiManager.getFeedbackState();
+        if (currentState !== window.MCPFeedback.Utils.CONSTANTS.FEEDBACK_WAITING) {
+            console.log('🔗 當前不在等待狀態（' + currentState + '），跳過自動保持連接');
+            return;
+        }
+
+        if (!this.webSocketManager.isReady()) {
+            console.warn('🔗 WebSocket 未就緒，跳過自動保持連接');
+            return;
+        }
+
+        try {
+            // 設置處理狀態
+            this.uiManager.setFeedbackState(window.MCPFeedback.Utils.CONSTANTS.FEEDBACK_PROCESSING);
+
+            // 停止自動提交計時器（如果正在運行）
+            if (this.autoSubmitManager && this.autoSubmitManager.isEnabled) {
+                this.autoSubmitManager.stop();
+            }
+
+            // 停止會話超時計時器
+            if (this.webSocketManager) {
+                this.webSocketManager.stopSessionTimeout();
+            }
+
+            // 直接發送"-"作為反饋，保持 interactive_feedback 會話循環
+            var success = this.webSocketManager.send({
+                type: 'submit_feedback',
+                feedback: '-',
+                images: [],
+                settings: {}
+            });
+
+            if (success) {
+                console.log('🔗 已自動發送"-"反饋以保持連接活躍');
+            } else {
+                // 發送失敗，恢復到等待狀態
+                this.uiManager.setFeedbackState(window.MCPFeedback.Utils.CONSTANTS.FEEDBACK_WAITING);
+                console.warn('🔗 自動保持連接發送失敗（WebSocket 未連接）');
+            }
+        } catch (error) {
+            console.error('❌ 自動保持連接失敗:', error);
+            this.uiManager.setFeedbackState(window.MCPFeedback.Utils.CONSTANTS.FEEDBACK_WAITING);
+        }
+    };
+
+    /**
+     * 處理定時保持連接狀態變更（由 settings-manager 調用）
+     */
+    FeedbackApp.prototype.handleKeepAliveStateChange = function(enabled) {
+        console.log('🔗 定時保持連接狀態變更:', enabled);
+
+        if (enabled) {
+            this.checkAndStartKeepAlive();
+        } else {
+            this.stopKeepAlive();
+        }
     };
 
     // 將 FeedbackApp 加入命名空間

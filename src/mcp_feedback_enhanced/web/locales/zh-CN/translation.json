@@ -145,7 +145,13 @@
         "sessionTimeoutEnableDesc": "启用后，会话将在指定时间后自动关闭",
         "sessionTimeoutDuration": "超时时间（秒）",
         "sessionTimeoutDurationDesc": "设置会话超时时间，范围：300-86400 秒（5分钟-24小时）",
-        "sessionTimeoutSeconds": "秒"
+        "sessionTimeoutSeconds": "秒",
+        "keepAliveTitle": "🔗 定时保持连接",
+        "keepAliveEnable": "启用定时保持连接",
+        "keepAliveEnableDesc": "启用后，在用户无操作时自动定时发送 \"-\" 反馈，使 interactive_feedback 会话循环保持活跃。AI 收到 \"-\" 后会重新调用 interactive_feedback 继续等待下一次真实反馈。",
+        "keepAliveInterval": "间隔时间（秒）",
+        "keepAliveIntervalDesc": "设定自动发送 \"-\" 的间隔，范围：60-3600 秒（1分钟-1小时）",
+        "keepAliveSeconds": "秒"
     },
     "languages": {
         "zh-TW": "繁體中文",

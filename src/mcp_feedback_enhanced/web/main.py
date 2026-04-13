@@ -120,6 +120,8 @@ class WebUIManager:
         # 會話更新通知標記
         self._pending_session_update = False
 
+        # 會話是否為複用模式（不創建新 UUID）
+        self._session_reused = False
         # 會話清理統計
         self.cleanup_stats: dict[str, Any] = {
             "total_cleanups": 0,
@@ -327,7 +329,28 @@ class WebUIManager:
             raise RuntimeError(f"Templates directory not found: {web_templates_path}")
 
     def create_session(self, project_directory: str, summary: str) -> str:
-        """創建新的回饋會話 - 重構為單一活躍會話模式，保留標籤頁狀態"""
+        """創建新的回饋會話 - 重構為單一活躍會話模式，保留標籤頁狀態
+
+        若當前會話已提交反饋（FEEDBACK_SUBMITTED 狀態），則直接複用現有會話
+        而不創建新的 UUID，實現無縫持續連接體驗。
+        """
+        # 若當前會話已提交反饋，直接複用（不創建新會話）
+        if (
+            self.current_session
+            and self.current_session.status == SessionStatus.FEEDBACK_SUBMITTED
+            and self.current_session.websocket
+        ):
+            debug_log(
+                f"複用現有會話 {self.current_session.session_id}，狀態從 FEEDBACK_SUBMITTED 重置為 WAITING"
+            )
+            self.current_session.reset_for_reuse(project_directory, summary)
+            # 標記需要發送 session_resumed 通知（由 notify_existing_tab_to_refresh 處理）
+            self._session_reused = True
+            return self.current_session.session_id
+
+        # 正常流程：創建新會話
+        self._session_reused = False
+
         # 保存舊會話的引用和 WebSocket 連接
         old_session = self.current_session
         old_websocket = None
@@ -760,6 +783,9 @@ class WebUIManager:
     async def notify_existing_tab_to_refresh(self) -> bool:
         """通知現有標籤頁刷新顯示新會話內容
 
+        若會話為複用模式（_session_reused=True），發送 session_resumed 通知，
+        前端只更新摘要和重置表單，不創建歷史記錄也不播放新會話音效。
+
         Returns:
             bool: True 表示成功發送，False 表示失敗
         """
@@ -768,22 +794,39 @@ class WebUIManager:
                 debug_log("沒有活躍的WebSocket連接，無法發送刷新通知")
                 return False
 
-            # 構建刷新通知消息
-            refresh_message = {
-                "type": "session_updated",
-                "action": "new_session_created",
-                "messageCode": "session.created",
-                "session_info": {
-                    "session_id": self.current_session.session_id,
-                    "project_directory": self.current_session.project_directory,
-                    "summary": self.current_session.summary,
-                    "status": self.current_session.status.value,
-                },
-            }
+            # 根據是否為複用模式選擇消息類型
+            if self._session_reused:
+                refresh_message = {
+                    "type": "session_updated",
+                    "action": "session_resumed",
+                    "session_info": {
+                        "session_id": self.current_session.session_id,
+                        "project_directory": self.current_session.project_directory,
+                        "summary": self.current_session.summary,
+                        "status": self.current_session.status.value,
+                    },
+                }
+                debug_log(f"發送會話複用通知（session_resumed）: {self.current_session.session_id}")
+            else:
+                # 構建刷新通知消息
+                refresh_message = {
+                    "type": "session_updated",
+                    "action": "new_session_created",
+                    "messageCode": "session.created",
+                    "session_info": {
+                        "session_id": self.current_session.session_id,
+                        "project_directory": self.current_session.project_directory,
+                        "summary": self.current_session.summary,
+                        "status": self.current_session.status.value,
+                    },
+                }
+                debug_log(f"發送新會話通知（new_session_created）: {self.current_session.session_id}")
 
             # 發送刷新通知
             await self.current_session.websocket.send_json(refresh_message)
-            debug_log(f"已向現有標籤頁發送刷新通知: {self.current_session.session_id}")
+
+            # 重置複用標記
+            self._session_reused = False
 
             # 簡單等待一下讓消息發送完成
             await asyncio.sleep(0.2)

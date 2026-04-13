@@ -62,9 +62,9 @@ def setup_routes(manager: "WebUIManager"):
         if not current_session:
             # 沒有活躍會話時顯示等待頁面
             return manager.templates.TemplateResponse(
+                request,
                 "index.html",
-                {
-                    "request": request,
+                context={
                     "title": "MCP Feedback Enhanced",
                     "has_session": False,
                     "version": __version__,
@@ -76,11 +76,12 @@ def setup_routes(manager: "WebUIManager"):
         layout_mode = load_user_layout_settings()
 
         return manager.templates.TemplateResponse(
+            request,
             "feedback.html",
-            {
-                "request": request,
+            context={
                 "project_directory": current_session.project_directory,
                 "summary": current_session.summary,
+                "session_id": current_session.session_id,
                 "title": "Interactive Feedback - 回饋收集",
                 "version": __version__,
                 "has_session": True,
@@ -671,6 +672,17 @@ async def handle_websocket_message(manager: "WebUIManager", session, data: dict)
         # 處理來自前端的 pong 回應（用於連接檢測）
         debug_log(f"收到 pong 回應，時間戳: {data.get('timestamp', 'N/A')}")
         # 可以在這裡記錄延遲或更新連接狀態
+
+    elif message_type == "keep_alive":
+        # 定時保持連接信號：延長後端等待截止時間，不提交反饋，對 LLM 透明
+        interval = data.get("interval", 300)
+        session.extend_keep_alive_deadline(interval)
+        debug_log(f"收到 keep_alive 信號，間隔: {interval}s，已延長超時截止時間")
+        if session.websocket:
+            try:
+                await session.websocket.send_json({"type": "keep_alive_ack"})
+            except Exception as e:
+                debug_log(f"發送 keep_alive_ack 失敗: {e}")
 
     elif message_type == "update_timeout_settings":
         # 處理超時設定更新

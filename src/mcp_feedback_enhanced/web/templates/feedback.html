@@ -975,6 +975,43 @@
                     </div>
                 </div>
 
+                <!-- 定時保持連接設定卡片 -->
+                <div class="settings-card">
+                    <div class="settings-card-header">
+                        <h3 class="settings-card-title" data-i18n="settingsUI.keepAliveTitle">🔗 定時保持連接</h3>
+                    </div>
+                    <div class="settings-card-body">
+                        <div class="setting-item">
+                            <div class="setting-info">
+                                <div class="setting-label" data-i18n="settingsUI.keepAliveEnable">啟用定時保持連接</div>
+                                <div class="setting-description" data-i18n="settingsUI.keepAliveEnableDesc">
+                                    啟用後，將按設定間隔自動提交保持連接訊息，防止 interactive feedback 會話超時斷開
+                                </div>
+                            </div>
+                            <div class="setting-control">
+                                <label class="toggle-switch">
+                                    <input type="checkbox" id="keepAliveEnabled" class="toggle-input">
+                                    <span class="toggle-slider"></span>
+                                </label>
+                            </div>
+                        </div>
+
+                        <div class="setting-item">
+                            <div class="setting-info">
+                                <div class="setting-label" data-i18n="settingsUI.keepAliveInterval">間隔時間（秒）</div>
+                                <div class="setting-description" data-i18n="settingsUI.keepAliveIntervalDesc">
+                                    設定保持連接訊號的發送間隔，範圍：60-3600 秒（1分鐘-1小時）
+                                </div>
+                            </div>
+                            <div class="setting-control">
+                                <input type="number" id="keepAliveInterval" min="60" max="3600" value="300"
+                                       class="form-input" style="width: 120px;">
+                                <span class="input-suffix" data-i18n="settingsUI.keepAliveSeconds">秒</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
                 <!-- 會話歷史管理卡片 -->
                 <div class="settings-card">
                     <div class="settings-card-header">

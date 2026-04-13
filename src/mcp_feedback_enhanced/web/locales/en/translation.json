@@ -144,7 +144,13 @@
         "sessionTimeoutEnableDesc": "When enabled, the session will automatically close after the specified time",
         "sessionTimeoutDuration": "Timeout Duration (seconds)",
         "sessionTimeoutDurationDesc": "Set session timeout duration, range: 300-86400 seconds (5 minutes - 24 hours)",
-        "sessionTimeoutSeconds": "seconds"
+        "sessionTimeoutSeconds": "seconds",
+        "keepAliveTitle": "🔗 Keep Connection Alive",
+        "keepAliveEnable": "Enable Keep-Alive",
+        "keepAliveEnableDesc": "When enabled, automatically sends \"-\" feedback at set intervals when there is no user activity, keeping the interactive_feedback session loop alive. The AI will re-call interactive_feedback to continue waiting for real feedback.",
+        "keepAliveInterval": "Interval (seconds)",
+        "keepAliveIntervalDesc": "How often to auto-send \"-\", range: 60-3600 seconds (1 minute - 1 hour)",
+        "keepAliveSeconds": "seconds"
     },
     "languages": {
         "zh-TW": "繁體中文",

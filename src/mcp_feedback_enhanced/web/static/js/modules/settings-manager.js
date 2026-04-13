@@ -54,6 +54,9 @@
             // 會話超時設定
             sessionTimeoutEnabled: false,  // 預設關閉
             sessionTimeoutSeconds: 3600,   // 預設 1 小時（秒）
+            // 定時保持連接設定
+            keepAliveEnabled: false,       // 預設關閉
+            keepAliveInterval: 300,        // 預設 5 分鐘（秒）
             // 自動執行命令設定
             autoCommandEnabled: true,      // 是否啟用自動執行命令
             commandOnNewSession: '',       // 新會話建立時執行的命令
@@ -427,6 +430,9 @@
         
         // 應用會話超時設定
         this.applySessionTimeoutSettings();
+
+        // 應用定時保持連接設定
+        this.applyKeepAliveSettings();
     };
 
     /**
@@ -628,6 +634,28 @@
         console.log('會話超時設定已應用到 UI:', {
             enabled: this.currentSettings.sessionTimeoutEnabled,
             seconds: this.currentSettings.sessionTimeoutSeconds
+        });
+    };
+
+    /**
+     * 應用定時保持連接設定
+     */
+    SettingsManager.prototype.applyKeepAliveSettings = function() {
+        // 更新啟用開關
+        const keepAliveEnabled = Utils.safeQuerySelector('#keepAliveEnabled');
+        if (keepAliveEnabled) {
+            keepAliveEnabled.checked = this.currentSettings.keepAliveEnabled;
+        }
+
+        // 更新間隔時間輸入框
+        const keepAliveInterval = Utils.safeQuerySelector('#keepAliveInterval');
+        if (keepAliveInterval) {
+            keepAliveInterval.value = this.currentSettings.keepAliveInterval;
+        }
+
+        console.log('定時保持連接設定已應用到 UI:', {
+            enabled: this.currentSettings.keepAliveEnabled,
+            interval: this.currentSettings.keepAliveInterval
         });
     };
 
@@ -980,6 +1008,50 @@
                 }
             });
         }
+
+        // 定時保持連接啟用開關
+        const keepAliveEnabled = Utils.safeQuerySelector('#keepAliveEnabled');
+        if (keepAliveEnabled) {
+            keepAliveEnabled.addEventListener('change', function() {
+                const newValue = keepAliveEnabled.checked;
+                self.set('keepAliveEnabled', newValue);
+                console.log('定時保持連接狀態已更新:', newValue);
+
+                // 通知 app 層處理 keep-alive 狀態變更
+                if (window.MCPFeedback && window.MCPFeedback.app && window.MCPFeedback.app.handleKeepAliveStateChange) {
+                    window.MCPFeedback.app.handleKeepAliveStateChange(newValue);
+                }
+            });
+        }
+
+        // 定時保持連接間隔時間設定
+        const keepAliveInterval = Utils.safeQuerySelector('#keepAliveInterval');
+        if (keepAliveInterval) {
+            keepAliveInterval.addEventListener('change', function(e) {
+                const seconds = parseInt(e.target.value);
+
+                // 驗證輸入值範圍
+                if (isNaN(seconds) || seconds < 60) {
+                    e.target.value = 60;
+                    self.set('keepAliveInterval', 60);
+                } else if (seconds > 3600) {
+                    e.target.value = 3600;
+                    self.set('keepAliveInterval', 3600);
+                } else {
+                    self.set('keepAliveInterval', seconds);
+                }
+
+                console.log('定時保持連接間隔已更新:', self.get('keepAliveInterval'), '秒');
+
+                // 如果正在運行，通知重啟定時器
+                if (window.MCPFeedback && window.MCPFeedback.app && window.MCPFeedback.app.handleKeepAliveStateChange) {
+                    window.MCPFeedback.app.handleKeepAliveStateChange(self.get('keepAliveEnabled'));
+                }
+            });
+        }
+
+        // 定時保持連接訊息設定
+        // （已移除：新版本使用靜默 WebSocket 信號，無需自定義消息）
 
         // 重置設定
         const resetBtn = Utils.safeQuerySelector('#resetSettingsBtn');
